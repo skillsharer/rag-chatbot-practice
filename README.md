@@ -1,1 +1,1 @@
-# rag-chatbot-practice
+# Rag Chatbot Practice
