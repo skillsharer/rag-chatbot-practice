@@ -11,12 +11,4 @@ class Embedder:
         Embedding and uploading to the vector database the chunks.
         """
         vector = self.embedder.encode(text)
-        self.db.add(vector=vector, text=text)
-
-    def query(self, text):
-        """
-        Embed the query vector and retrieve the top k results which are similar to the query vector based on cosine similarity.
-        """
-        vector = self.embedder.encode(text)
-        results = self.db.retrieve_top_k(vector)
-        return results
+        return vector

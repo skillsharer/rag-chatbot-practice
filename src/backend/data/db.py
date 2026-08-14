@@ -1,10 +1,11 @@
 import numpy as np
+from config import TOP_K
 
 
 class VectorDatabase:
-    def __init__(self, top_k):
+    def __init__(self):
         self.db = []
-        self.top_k = top_k
+        self.top_k = TOP_K
 
     def retrieve_top_k(self, query_vector):
         """
@@ -57,7 +58,7 @@ class VectorDatabase:
         """
         del self.db[idx]
 
-    def snapshot(self, output_path):
+    def create_snapshot(self, output_path):
         """
         Save the current vector database to disk.
         """
