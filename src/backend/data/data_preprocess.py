@@ -1,5 +1,5 @@
-import fitz
-from config import CHUNK_SIZE
+import pymupdf
+from src.config import CHUNK_SIZE
 
 class DataPreprocessor:
     def __init__(self):
@@ -10,7 +10,7 @@ class DataPreprocessor:
         Loads pdf file and simply read text from it.
         """
         pdf_text_data = ""
-        with fitz.open(file_path) as pdf_document:
+        with pymupdf.open(file_path) as pdf_document:
             for page_num in range(pdf_document.page_count):
                 page = pdf_document.load_page(page_num)
                 page_text = page.get_text("text").lower()

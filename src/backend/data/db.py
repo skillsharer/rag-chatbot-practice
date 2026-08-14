@@ -1,5 +1,6 @@
 import numpy as np
-from config import TOP_K
+import os
+from src.config import TOP_K
 
 
 class VectorDatabase:
@@ -62,6 +63,10 @@ class VectorDatabase:
         """
         Save the current vector database to disk.
         """
+        directory = os.path.dirname(output_path)
+        if directory and not os.path.exists(os.path.dirname(output_path)):
+            os.makedirs(directory)
+        
         np.save(output_path, self.db)
 
 

@@ -1,18 +1,25 @@
 import os
-from config import DATABASE_PATH, SNAPSHOT_PATH
-from backend.data.data_preprocess import DataPreprocessor
-from backend.data.db import VectorDatabase
-from backend.data.embed import Embedder
+import logging
+from src.config import DATABASE_PATH, SNAPSHOT_PATH
+from src.backend.data.data_preprocess import DataPreprocessor
+from src.backend.data.db import VectorDatabase
+from src.backend.data.embed import Embedder
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
+logger.info("Initializing...")
 data_preprocessor = DataPreprocessor()
 vector_db = VectorDatabase()
 sentence_embedder = Embedder()
+logger.info("Initializing finished")
 
 # Load pdfs and chunkify
 data_files = os.listdir(DATABASE_PATH)
 for data_file in data_files:
-    text_data = data_preprocessor.load_pdf(data_file)
+    file_path = os.path.join(DATABASE_PATH, data_file)
+    text_data = data_preprocessor.load_pdf(file_path)
+    logger.info(f"Text preview: {text_data[:10]}")
     chunks = data_preprocessor.chunkify(text_data=text_data)
     # Embed and upload
     for chunk in chunks:
@@ -21,4 +28,5 @@ for data_file in data_files:
 
 
 # Make a snapshot
+logger.info(f"Creating snapshot to: {SNAPSHOT_PATH}")
 vector_db.create_snapshot(output_path=SNAPSHOT_PATH)
