@@ -5,6 +5,9 @@ description = "A rag chatbot based on Langgraph."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "langchain-core>=1.5.4",
+    "langgraph>=1.2.11",
     "pymupdf>=1.28.2",
     "python-dotenv>=1.2.2",
+    "sentence-transformers>=5.7.0",
 ]
