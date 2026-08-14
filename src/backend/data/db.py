@@ -56,3 +56,16 @@ class VectorDatabase:
         Delete entry from the database.
         """
         del self.db[idx]
+
+    def snapshot(self, output_path):
+        """
+        Save the current vector database to disk.
+        """
+        np.save(output_path, self.db)
+
+
+    def load_snapshot(self, snapshot_path):
+        """
+        Load the vector database from disk.
+        """
+        self.db = np.load(snapshot_path, allow_pickle=True).tolist()

@@ -1,11 +1,10 @@
 from sentence_transformers import SentenceTransformer
 from config import SENTENCE_TRANSFORMER_MODEL
-from db import VectorDatabase
 
 class Embedder:
-    def __init__(self):
+    def __init__(self, vector_database):
         self.embedder = SentenceTransformer(SENTENCE_TRANSFORMER_MODEL)
-        self.db = VectorDatabase()
+        self.db = vector_database
 
     def embed(self, text):
         """
