@@ -1,11 +1,14 @@
 import numpy as np
 import os
-from src.config import TOP_K
+from src.config import TOP_K, SNAPSHOT_PATH
 
 
 class VectorDatabase:
     def __init__(self):
-        self.db = []
+        if SNAPSHOT_PATH:
+            self.load_snapshot(SNAPSHOT_PATH)
+        else:
+            self.db = []
         self.top_k = TOP_K
 
     def retrieve_top_k(self, query_vector):
