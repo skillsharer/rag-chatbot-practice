@@ -65,6 +65,14 @@ class UserInterface:
 
                     st.markdown(response)
 
+                retrieved_docs = self.connector.get_retrieved_documents()
+            
+                if retrieved_docs:
+                    with st.expander("Retrieved documents"):
+                        for idx, (doc_id, text, score) in enumerate(retrieved_docs, start=1):
+                            st.markdown(f"**Document {idx} · score: {score:.3f}**")
+                            st.write(text)
+
             st.session_state.messages.append({
                 "role": "assistant",
                 "content": response,

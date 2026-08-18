@@ -50,6 +50,9 @@ class BackendConnector:
             {edges}
         }}
         """
+
+    def get_retrieved_documents(self):
+        return self.backend.last_retrieved_documents
     
     def delete_chat(self, thread_id: str):
         """

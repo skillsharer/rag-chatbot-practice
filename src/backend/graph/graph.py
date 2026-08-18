@@ -4,7 +4,7 @@ from langchain_core.utils.json import parse_json_markdown
 from langchain_core.messages import convert_to_openai_messages
 from src.config import SNAPSHOT_PATH
 from src.backend.state import SystemState
-from src.backend.prompts import INTENTPROMPT, PLAN_PROMPT, SUMMARY_PROMPT
+from src.backend.prompts import REFINEMENT_PROMPT, PLAN_PROMPT, SUMMARY_PROMPT
 from src.backend.ollama import OllamaConnector
 from src.backend.data.db import VectorDatabase
 from src.backend.data.embed import Embedder
@@ -17,6 +17,7 @@ class BackendStateMachine:
         self.sentence_embedder = Embedder()
         self.checkpointer = InMemorySaver()
         self.visited_nodes = []
+        self.last_retrieved_documents = []
         self.build_graph()
 
     def build_graph(self):
@@ -48,14 +49,14 @@ class BackendStateMachine:
 
         builder = StateGraph(SystemState)
 
-        builder.add_node("intent_classification", self.intent_classification)
+        builder.add_node("user_query_refinement", self.user_query_refinement)
         builder.add_node("plan_task", self.plan_task)
         builder.add_node("rag", self.rag_graph)
         builder.add_node("tool",self.tool_graph)
         builder.add_node("summarize", self.summarize)
 
-        builder.add_edge(START, "intent_classification")
-        builder.add_edge("intent_classification", "plan_task")
+        builder.add_edge(START, "user_query_refinement")
+        builder.add_edge("user_query_refinement", "plan_task")
         builder.add_conditional_edges("plan_task", self.route_task)
         builder.add_edge("rag", "summarize")
         builder.add_edge("tool", "summarize")
@@ -64,26 +65,27 @@ class BackendStateMachine:
         self.graph = builder.compile(checkpointer=self.checkpointer)
 
 
-    def intent_classification(self, state: SystemState):
-        self.visited_nodes.append("intent_classification")
+    def user_query_refinement(self, state: SystemState):
+        self.visited_nodes.append("user_query_refinement")
+        self.last_retrieved_documents = []
+
         messages = [
             {
                 "role": "system",
-                "content": INTENTPROMPT,
+                "content": REFINEMENT_PROMPT,
             }
         ]
 
-        history = convert_to_openai_messages(state.get("messages", []))
+        history = convert_to_openai_messages(
+            state.get("messages", [])
+        )
         messages.extend(history)
 
         response = self.ollama_connector.chat(messages=messages)
         response_json = parse_json_markdown(response)
 
         return {
-            "refined_query": response_json.get("refined_query",""),
-            "refinement_needed": response_json.get("refinement_needed", False),
-            "clarification_needed": response_json.get("clarification_needed", False),
-            "clarification_question": response_json.get("clarification_question", ""),
+            "refined_query": response_json.get("refined_query", "")
         }
 
     def plan_task(self, state: SystemState):
@@ -146,6 +148,7 @@ class BackendStateMachine:
                     "content": response,
                 }
             ],
+            "retrieved_documents": []
         }
 
 
@@ -157,7 +160,11 @@ class BackendStateMachine:
 
     def rerank(self, state: SystemState):
         self.visited_nodes.append("rerank")
-        return {"retrieved_documents": state["retrieved_documents"]}
+
+        reranked_documents = state["retrieved_documents"]
+        self.last_retrieved_documents = reranked_documents
+
+        return {"retrieved_documents": reranked_documents}
 
     def select_tool(self, state: SystemState):
         self.visited_nodes.append("select_tool")
