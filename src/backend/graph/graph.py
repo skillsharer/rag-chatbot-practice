@@ -1,5 +1,8 @@
 from langgraph.graph import START, END, StateGraph
+from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.utils.json import parse_json_markdown
+from langchain_core.messages import convert_to_openai_messages
+from src.config import SNAPSHOT_PATH
 from src.backend.state import SystemState
 from src.backend.prompts import INTENTPROMPT, PLAN_PROMPT, SUMMARY_PROMPT
 from src.backend.ollama import OllamaConnector
@@ -10,7 +13,9 @@ class BackendStateMachine:
     def __init__(self):
         self.ollama_connector = OllamaConnector()
         self.vector_db = VectorDatabase()
+        self.vector_db.load_snapshot(SNAPSHOT_PATH)
         self.sentence_embedder = Embedder()
+        self.checkpointer = InMemorySaver()
         self.build_graph()
 
     def build_graph(self):
@@ -55,31 +60,29 @@ class BackendStateMachine:
         builder.add_edge("tool", "summarize")
         builder.add_edge("summarize", END)
 
-        self.graph = builder.compile()
+        self.graph = builder.compile(checkpointer=self.checkpointer)
 
 
     def intent_classification(self, state: SystemState):
         messages = [
             {
                 "role": "system",
-                "content": INTENTPROMPT
+                "content": INTENTPROMPT,
             }
         ]
-        messages.extend(state.get("messages", []))
-        messages.append(
-            {
-                "role": "user",
-                "content": state['user_query']
-            }
-        )
+
+        history = convert_to_openai_messages(state.get("messages", []))
+        messages.extend(history)
+
         response = self.ollama_connector.chat(messages=messages)
         response_json = parse_json_markdown(response)
+
         return {
-            "refined_query": response_json["refined_query"], 
+            "refined_query": response_json["refined_query"],
             "refinement_needed": response_json["refinement_needed"],
-            "clarification_needed": response_json["clarification_needed"], 
-            "clarification_question": response_json["clarification_question"]
-            }
+            "clarification_needed": response_json["clarification_needed"],
+            "clarification_question": response_json["clarification_question"],
+        }
 
     def plan_task(self, state: SystemState):
         messages = [
@@ -108,13 +111,15 @@ class BackendStateMachine:
     def summarize(self, state: SystemState):
         context = state.get("retrieved_documents", [])
         tool_result = state.get("tool_result", "")
-        messages = [{
-            "role": "system",
-            "content": SUMMARY_PROMPT
-        },
-        {
-            "role": "user",
-            "content": f"""
+
+        messages = [
+            {
+                "role": "system",
+                "content": SUMMARY_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": f"""
                 Query:
                 {state["refined_query"]}
 
@@ -123,11 +128,21 @@ class BackendStateMachine:
 
                 Tool result:
                 {tool_result}
-            """
-        }
+                """,
+            },
         ]
+
         response = self.ollama_connector.chat(messages=messages)
-        return {"answer": response}
+
+        return {
+            "answer": response,
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": response,
+                }
+            ],
+        }
 
 
     def retrieve(self, state: SystemState):
@@ -145,6 +160,9 @@ class BackendStateMachine:
 
     def execute_tool(self, state: SystemState):
         return {}
+
+    def delete_chat(self, thread_id: str):
+        self.backend.checkpointer.delete_thread(thread_id)
 
 
 if __name__ == "__main__":

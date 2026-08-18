@@ -1,4 +1,5 @@
 import streamlit as st
+import uuid
 
 class UserInterface:
 
@@ -16,7 +17,7 @@ class UserInterface:
             st.session_state.messages = []
 
         if "thread_id" not in st.session_state:
-            st.session_state.thread_id = "streamlit-session"
+            st.session_state.thread_id = str(uuid.uuid4())
 
 
     def run(self):
@@ -62,7 +63,7 @@ class UserInterface:
 
             try:
                 graph_png = self.connector.get_graph_png()
-                st.image(graph_png, use_container_width=True)
+                st.image(graph_png, width='stretch')
             except Exception as exc:
                 st.info(f"Graph visualization unavailable: {exc}")
 
@@ -71,4 +72,5 @@ class UserInterface:
             if st.button("Clear chat"):
                 self.connector.delete_chat(st.session_state.thread_id)
                 st.session_state.messages = []
+                st.session_state.thread_id = str(uuid.uuid4())
                 st.rerun()

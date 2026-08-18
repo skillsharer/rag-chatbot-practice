@@ -12,18 +12,29 @@ class BackendConnector:
         """
         Send a message to the LangGraph backend.
         """
-        result = self.backend.invoke(
-            {"messages": [{"role": "user", "content": message}]},
-            config={"configurable": {"thread_id": thread_id}},
+        result = self.backend.graph.invoke(
+            {
+                "user_query": message,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": message,
+                    }
+                ],
+            },
+            config={
+                "configurable": {
+                    "thread_id": thread_id
+                }
+            },
         )
-
-        return result["messages"][-1].content
+        return result["answer"]
 
     def get_graph_png(self) -> bytes:
         """
         Return the LangGraph graph as PNG bytes.
         """
-        return self.backend.get_graph().draw_mermaid_png()
+        return self.backend.graph.get_graph().draw_mermaid_png()
 
     def delete_chat(self, thread_id: str):
         """

@@ -1,8 +1,10 @@
-from typing import TypedDict, Optional
+from typing import TypedDict, Optional, Annotated
+from langgraph.graph.message import add_messages
+
 
 class SystemState(TypedDict):
     user_query: str
-    messages: list[dict]
+    messages: Annotated[list, add_messages]
     refined_query: str
     clarification_needed: bool
     clarification_question: Optional[str]
