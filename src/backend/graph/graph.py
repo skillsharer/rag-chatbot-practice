@@ -9,7 +9,7 @@ from src.backend.prompts import REFINEMENT_PROMPT, PLAN_PROMPT, SUMMARY_PROMPT, 
 from src.backend.ollama import OllamaConnector
 from src.backend.data.db import VectorDatabase
 from src.backend.data.embed import Embedder
-from backend.tools.wiki_search import WikipediaSearch
+from src.backend.tools.wiki_search import WikipediaSearch
 
 class BackendStateMachine:
     def __init__(self):
