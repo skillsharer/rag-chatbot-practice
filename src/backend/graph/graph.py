@@ -78,10 +78,10 @@ class BackendStateMachine:
         response_json = parse_json_markdown(response)
 
         return {
-            "refined_query": response_json["refined_query"],
-            "refinement_needed": response_json["refinement_needed"],
-            "clarification_needed": response_json["clarification_needed"],
-            "clarification_question": response_json["clarification_question"],
+            "refined_query": response_json.get("refined_query",""),
+            "refinement_needed": response_json.get("refinement_needed", False),
+            "clarification_needed": response_json.get("clarification_needed", False),
+            "clarification_question": response_json.get("clarification_question", ""),
         }
 
     def plan_task(self, state: SystemState):
@@ -97,7 +97,7 @@ class BackendStateMachine:
             ]
         response = self.ollama_connector.chat(messages=messages)
         response_json = parse_json_markdown(response)
-        return {"plan": response_json["strategy"]}
+        return {"plan": response_json.get("strategy", "SIMPLE")}
 
 
     def route_task(self, state: SystemState):

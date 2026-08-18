@@ -40,7 +40,7 @@ class VectorDatabase:
         if denominator == 0:
             return 0.0
 
-        return np.dot(query_vector, db_vector) / denominator
+        return float(np.dot(query_vector, db_vector) / denominator)
 
     def add(self, vector, text):
         """
