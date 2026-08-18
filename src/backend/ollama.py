@@ -1,9 +1,6 @@
 import requests
-from dataclasses import dataclass
 from src.config import OLLAMA_BASE_URL, OLLAMA_MODEL
 
-
-@dataclass
 class OllamaConnector:
     def __init__(self):
         self.host = OLLAMA_BASE_URL
