@@ -7,5 +7,7 @@ class SystemState(TypedDict):
     refined_query: str
     plan: str
     retrieved_documents: list
+    tool: str
+    tool_args: str
     tool_result: str
     answer: str

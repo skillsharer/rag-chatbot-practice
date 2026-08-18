@@ -1,46 +1,72 @@
 REFINEMENT_PROMPT = """
-You refine the user's latest message into a clear, self-contained query.
+Rewrite the user's latest message into a clear, self-contained query when needed.
 
-You have access to the conversation history.
+Use the conversation history to understand references to previous messages.
 
 Rules:
 1. Preserve the user's meaning.
-2. If the latest message depends on previous conversation context, rewrite it into a self-contained query using that context.
-3. If it is already clear and self-contained, return it unchanged by following the provided JSON schema.
+2. Resolve references using the conversation history when necessary.
+3. If the latest message is already clear, return it unchanged.
 4. Do not answer the query.
-5. Do not add information the user did not provide.
+5. Do not add new information.
 
-Return only a valid JSON:
+Return only valid JSON:
 {
   "refined_query": "<self-contained query>"
 }
 """
 
 PLAN_PROMPT = """
-You decide how to handle the user's refined query.
+Choose exactly one strategy for the user's query.
 
-Choose exactly one strategy:
+Strategies:
 
-- `RAG` — The answer requires information from the uploaded documents.
-- `TOOL` — The request requires an external tool or capability.
-- `SIMPLE` — The request can be answered directly without documents or tools.
+- `SIMPLE`
+  Use when the query can be answered directly without looking anything up.
+
+- `RAG`
+  Use only when the user wants information from the uploaded medication documents.
+
+- `TOOL`
+  Use when the user wants information from Wikipedia or wants to inspect which medication files exist in the local database.
 
 Rules:
-1. Use `RAG` only when the current query requires information from the uploaded documents.
-2. Do not use `RAG` only because earlier conversation turns used documents.
-3. Use `TOOL` only when an external tool is required.
-4. Use `SIMPLE` for greetings, casual conversation, acknowledgements, and general questions.
-5. Choose exactly one strategy.
-6. Do not answer the query.
+1. First ask: does the user explicitly or implicitly need the uploaded medication documents?
+   - If yes -> RAG.
+2. Otherwise ask: does the user need Wikipedia or the list of available local files?
+   - If yes -> TOOL.
+3. Otherwise -> SIMPLE.
+4. A medical topic alone does NOT mean RAG.
+5. A medicine name alone does NOT mean RAG.
+6. If the user asks for broader, external, encyclopedic, or Wikipedia information -> TOOL.
+7. If the user asks what medications or PDF files are available -> TOOL.
+8. Greetings, thanks, casual conversation, explanations, and follow-up discussion that do not require another lookup -> SIMPLE.
+9. Do not answer the query.
+
+Examples:
+
+"Hi" -> SIMPLE
+"Thanks" -> SIMPLE
+"Why is that dangerous?" -> SIMPLE
+
+"What are the side effects listed for Tecentriq?" -> RAG
+"What does the leaflet say about Cimzia pregnancy warnings?" -> RAG
+"According to the uploaded documents, what is Eliquis used for?" -> RAG
+
+"Search Wikipedia for Tecentriq." -> TOOL
+"Tell me more general information about Tecentriq from Wikipedia." -> TOOL
+"What medications are available in the database?" -> TOOL
+"List the PDF files." -> TOOL
 
 Return only valid JSON:
 {
-  "strategy": "RAG | TOOL | SIMPLE"
+  "plan": "SIMPLE | RAG | TOOL"
 }
 """
 
-
 SUMMARY_PROMPT = """
+You are a medical RAG system assistant module.
+
 Answer the user's refined query.
 
 You may receive retrieved document context or a tool result.
@@ -54,4 +80,26 @@ Rules:
 6. Keep the answer clear and concise.
 7. Do not mention internal system implementation.
 8. Return only the final answer.
+"""
+
+TOOL_PROMPT = """
+Select the correct tool for the user's query.
+
+Available tools:
+
+- `wikipedia` — Search Wikipedia for general knowledge.
+- `list_database` — List the medication PDF files available in the local database.
+
+Rules:
+1. Use `list_database` when the user asks what medications, documents, PDFs, or files are available.
+2. Use `wikipedia` when the user asks for general knowledge that should be looked up externally.
+3. For `wikipedia`, use the user's query as tool_args.
+4. For `list_database`, tool_args must be null.
+5. Do not answer the query.
+
+Return only valid JSON:
+{
+  "tool": "wikipedia | list_database",
+  "tool_args": "<query or null>"
+}
 """

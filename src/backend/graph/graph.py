@@ -1,13 +1,15 @@
+import os
 from langgraph.graph import START, END, StateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.utils.json import parse_json_markdown
 from langchain_core.messages import convert_to_openai_messages
-from src.config import SNAPSHOT_PATH
+from src.config import SNAPSHOT_PATH, DATABASE_PATH
 from src.backend.state import SystemState
-from src.backend.prompts import REFINEMENT_PROMPT, PLAN_PROMPT, SUMMARY_PROMPT
+from src.backend.prompts import REFINEMENT_PROMPT, PLAN_PROMPT, SUMMARY_PROMPT, TOOL_PROMPT
 from src.backend.ollama import OllamaConnector
 from src.backend.data.db import VectorDatabase
 from src.backend.data.embed import Embedder
+from backend.tools.wiki_search import WikipediaSearch
 
 class BackendStateMachine:
     def __init__(self):
@@ -16,6 +18,7 @@ class BackendStateMachine:
         self.vector_db.load_snapshot(SNAPSHOT_PATH)
         self.sentence_embedder = Embedder()
         self.checkpointer = InMemorySaver()
+        self.wiki_search = WikipediaSearch()
         self.visited_nodes = []
         self.last_retrieved_documents = []
         self.build_graph()
@@ -102,7 +105,7 @@ class BackendStateMachine:
             ]
         response = self.ollama_connector.chat(messages=messages)
         response_json = parse_json_markdown(response)
-        return {"plan": response_json.get("strategy", "SIMPLE")}
+        return {"plan": response_json.get("plan", "SIMPLE")}
 
 
     def route_task(self, state: SystemState):
@@ -168,14 +171,31 @@ class BackendStateMachine:
 
     def select_tool(self, state: SystemState):
         self.visited_nodes.append("select_tool")
-        return {
-            "tool_result": "No tool implemented yet.",
-            "visited_nodes": ["select_tool"],
-        }
+
+        messages = [
+            {
+                "role": "system",
+                "content": TOOL_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": f"""
+                User query:
+                    {state["refined_query"]}
+                """,
+            },
+        ]
+        response = self.ollama_connector.chat(messages=messages)
+        response = parse_json_markdown(response)
+        return {"tool": response.get("tool", ""), "tool_args": response.get("tool_args", "")}
 
     def execute_tool(self, state: SystemState):
         self.visited_nodes.append("execute_tool")
-        return {}
+        if state.get("tool", "") == "wikipedia":
+            tool_result = self.wiki_search.search(state["tool_args"])
+        else:
+            tool_result = [f for f in os.listdir(DATABASE_PATH) if f.endswith(".pdf")]
+        return {"tool_result": tool_result}
 
     def delete_chat(self, thread_id: str):
         self.backend.checkpointer.delete_thread(thread_id)
