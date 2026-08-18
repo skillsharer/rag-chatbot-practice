@@ -15,11 +15,12 @@ sentence_embedder = Embedder()
 logger.info("Initializing finished")
 
 # Load pdfs and chunkify
-data_files = os.listdir(DATABASE_PATH)
-for data_file in data_files:
+data_files = [f for f in os.listdir(DATABASE_PATH) if f.endswith(".pdf")]
+total = len(data_files)
+for idx, data_file in enumerate(data_files, start=1):
+    logger.info(f"Processing {idx}/{total}")
     file_path = os.path.join(DATABASE_PATH, data_file)
     text_data = data_preprocessor.load_pdf(file_path)
-    logger.info(f"Text preview: {text_data[:10]}")
     chunks = data_preprocessor.chunkify(text_data=text_data)
     # Embed and upload
     for chunk in chunks:

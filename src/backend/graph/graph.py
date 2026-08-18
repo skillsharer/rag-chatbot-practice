@@ -150,7 +150,7 @@ class BackendStateMachine:
 if __name__ == "__main__":
     backend_state_machine = BackendStateMachine()
     result = backend_state_machine.graph.invoke({
-        "user_query": "Hi, what diamond clocks are?"
+        "user_query": "Hi, is there any medicine which helps for my headache?"
     })
 
     print(result)

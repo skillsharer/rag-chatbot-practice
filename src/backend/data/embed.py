@@ -9,5 +9,5 @@ class Embedder:
         """
         Embedding and uploading to the vector database the chunks.
         """
-        vector = self.embedder.encode(text)
+        vector = self.embedder.encode(text, show_progress_bar=False)
         return vector
