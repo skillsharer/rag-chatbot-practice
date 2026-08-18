@@ -1,3 +1,7 @@
 **.venv
 **.python-version
 **__pycache__
+**/database
+**/*.npy
+.env
+**.vscode
