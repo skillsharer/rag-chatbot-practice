@@ -48,3 +48,8 @@ The practice is about to create an agentic RAG chatbot. The system requirements 
         - Optimization points
 - Why is this system design?
 
+## Pre-reqs:
+
+## Run:
+
+```uv run python -m streamlit run src/main.py```

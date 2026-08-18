@@ -7,11 +7,14 @@ class BackendConnector:
 
     def __init__(self, backend: Any):
         self.backend = backend
+        self.last_visited_nodes = []
     
     def chat(self, message: str, thread_id: str) -> str:
         """
         Send a message to the LangGraph backend.
         """
+        self.backend.visited_nodes = []
+
         result = self.backend.graph.invoke(
             {
                 "user_query": message,
@@ -28,14 +31,26 @@ class BackendConnector:
                 }
             },
         )
+        self.last_visited_nodes = self.backend.visited_nodes
+
         return result["answer"]
 
-    def get_graph_png(self) -> bytes:
-        """
-        Return the LangGraph graph as PNG bytes.
-        """
-        return self.backend.graph.get_graph().draw_mermaid_png()
+    def get_execution_graph(self) -> str:
+        nodes = ["START"] + self.last_visited_nodes + ["END"]
 
+        edges = "\n".join(
+            f'"{nodes[i]}" -> "{nodes[i + 1]}"'
+            for i in range(len(nodes) - 1)
+        )
+
+        return f"""
+        digraph {{
+            rankdir=TB
+            node [shape=box, style=rounded]
+            {edges}
+        }}
+        """
+    
     def delete_chat(self, thread_id: str):
         """
         Deletes chat history if user presses clear conversation button.

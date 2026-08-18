@@ -16,6 +16,7 @@ class BackendStateMachine:
         self.vector_db.load_snapshot(SNAPSHOT_PATH)
         self.sentence_embedder = Embedder()
         self.checkpointer = InMemorySaver()
+        self.visited_nodes = []
         self.build_graph()
 
     def build_graph(self):
@@ -64,6 +65,7 @@ class BackendStateMachine:
 
 
     def intent_classification(self, state: SystemState):
+        self.visited_nodes.append("intent_classification")
         messages = [
             {
                 "role": "system",
@@ -85,6 +87,7 @@ class BackendStateMachine:
         }
 
     def plan_task(self, state: SystemState):
+        self.visited_nodes.append("plan_task")
         messages = [
                 {
                     "role": "system",
@@ -109,6 +112,7 @@ class BackendStateMachine:
 
 
     def summarize(self, state: SystemState):
+        self.visited_nodes.append("summarize")
         context = state.get("retrieved_documents", [])
         tool_result = state.get("tool_result", "")
 
@@ -146,19 +150,24 @@ class BackendStateMachine:
 
 
     def retrieve(self, state: SystemState):
+        self.visited_nodes.append("retrieve")
         query_vector = self.sentence_embedder.embed(state["refined_query"])
         top_k_answers = self.vector_db.retrieve_top_k(query_vector=query_vector)
         return {"retrieved_documents": top_k_answers}
 
     def rerank(self, state: SystemState):
+        self.visited_nodes.append("rerank")
         return {"retrieved_documents": state["retrieved_documents"]}
 
     def select_tool(self, state: SystemState):
+        self.visited_nodes.append("select_tool")
         return {
-            "tool_result": "No tool implemented yet."
+            "tool_result": "No tool implemented yet.",
+            "visited_nodes": ["select_tool"],
         }
 
     def execute_tool(self, state: SystemState):
+        self.visited_nodes.append("execute_tool")
         return {}
 
     def delete_chat(self, thread_id: str):

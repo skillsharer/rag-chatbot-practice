@@ -4,14 +4,12 @@ import uuid
 class UserInterface:
 
     def __init__(self, page_title, layout, connector):
-        # Initial page settings
         st.set_page_config(
             page_title=page_title,
             layout=layout,
         )
 
         self.connector = connector
-        self.chat_column, self.graph_column = st.columns([2, 1])
 
         if "messages" not in st.session_state:
             st.session_state.messages = []
@@ -19,26 +17,41 @@ class UserInterface:
         if "thread_id" not in st.session_state:
             st.session_state.thread_id = str(uuid.uuid4())
 
-
     def run(self):
-        # UI columns
-        with self.chat_column:
-            st.subheader("Chat")
+        chat_column, graph_column = st.columns([2, 1])
+
+        with chat_column:
+            st.subheader("Medication assistant")
+            st.caption("Answers are grounded in medication information leaflets.")
 
             for message in st.session_state.messages:
                 with st.chat_message(message["role"]):
                     st.markdown(message["content"])
 
-            user_message = st.chat_input("Ask something...")
+        with graph_column:
+            st.subheader("Graph")
+            graph_placeholder = st.empty()
 
-            if user_message:
-                st.session_state.messages.append(
-                    {
-                        "role": "user",
-                        "content": user_message,
-                    }
-                )
+            graph_placeholder.graphviz_chart(
+                self.connector.get_execution_graph()
+            )
 
+        with st.bottom:
+            user_message = st.chat_input("Ask about a medication...")
+
+            if st.button("Clear chat"):
+                self.connector.delete_chat(st.session_state.thread_id)
+                st.session_state.messages = []
+                st.session_state.thread_id = str(uuid.uuid4())
+                st.rerun()
+
+        if user_message:
+            st.session_state.messages.append({
+                "role": "user",
+                "content": user_message,
+            })
+
+            with chat_column:
                 with st.chat_message("user"):
                     st.markdown(user_message)
 
@@ -48,29 +61,11 @@ class UserInterface:
                             message=user_message,
                             thread_id=st.session_state.thread_id,
                         )
+                        graph_placeholder.graphviz_chart(self.connector.get_execution_graph())
 
                     st.markdown(response)
 
-                st.session_state.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": response,
-                    }
-                )
-
-        with self.graph_column:
-            st.subheader("Graph")
-
-            try:
-                graph_png = self.connector.get_graph_png()
-                st.image(graph_png, width='stretch')
-            except Exception as exc:
-                st.info(f"Graph visualization unavailable: {exc}")
-
-            st.divider()
-
-            if st.button("Clear chat"):
-                self.connector.delete_chat(st.session_state.thread_id)
-                st.session_state.messages = []
-                st.session_state.thread_id = str(uuid.uuid4())
-                st.rerun()
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": response,
+            })
