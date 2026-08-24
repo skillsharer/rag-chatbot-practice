@@ -53,3 +53,22 @@ The practice is about to create an agentic RAG chatbot. The system requirements 
 ## Run:
 
 ```uv run python -m streamlit run src/main.py```
+
+
+
+## Docker:
+
+`docker build -t rag-chatbot .`
+
+```docker run \                 
+  --env-file .env \   
+  -v "$(pwd)/database:/app/database:ro" \
+  -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+  -p 8501:8501 \
+  rag-chatbot
+```
+
+
+```uv run python -m src.upload```
+
+```uv run python -m streamlit run src/main.py```
