@@ -5,7 +5,7 @@ from langchain_core.utils.json import parse_json_markdown
 from langchain_core.messages import convert_to_openai_messages
 from src.config import SNAPSHOT_PATH, MAX_NUM_OF_AGENT_STEPS
 from src.backend.state import SystemState
-from src.backend.prompts import refinement_prompt, agent_prompt, summary_prompt
+from src.backend.prompts import refinement_prompt, agent_prompt, review_prompt, summary_prompt
 from src.backend.ollama import OllamaConnector
 from src.backend.data.db import VectorDatabase
 from src.backend.data.embed import Embedder
@@ -77,10 +77,9 @@ class BackendStateMachine:
         Refining user query and delivers to SUMMARY or AGENT.
         """
         self.visited_nodes.append("user_query_refinement")
+
         logger.debug(f"user_query_refinement: {state}")
-
-        reset_values = self.reset_state()
-
+        self.retrieved_documents = []
         history = convert_to_openai_messages(state.get("messages", []))
         latest_message = history[-1]["content"]
         previous_history = history[:-1]
@@ -103,12 +102,59 @@ class BackendStateMachine:
         logger.debug(f"user_query_refinement: {response_json}")
 
         return {
-            **reset_values,
-            "refined_query": response_json.get("refined_query", ""),
             "action": response_json.get("action", "AGENT"),
+            "refined_query": response_json.get("refined_query", ""),
+            "plan": [],
             "completed_tasks": [],
+            "current_task": None,
+            "retrieved_documents": [],
             "steps": 0,
+            "answer": None
         }
+
+    @measure
+    def create_plan(self, refined_query: str):
+        messages = [
+            {
+                "role": "system",
+                "content": agent_prompt(refined_query=refined_query),
+            }
+        ]
+
+        try:
+            response = self.ollama_connector.chat(messages=messages)
+            plan = parse_json_markdown(response)
+
+            if not isinstance(plan, list):
+                logger.warning("Planner response is not a list.")
+                return []
+            return plan
+
+        except Exception as e:
+            logger.warning(f"Could not create plan: {e}")
+            return []
+
+
+    @measure
+    def review_completed_work(self, state: SystemState):
+        messages = [
+            {
+                "role": "system",
+                "content": review_prompt(
+                    refined_query=state["refined_query"],
+                    completed_tasks=state.get("completed_tasks", []),
+                ),
+            }
+        ]
+
+        try:
+            response = self.ollama_connector.chat(messages=messages)
+            result = parse_json_markdown(response)
+            return result
+
+        except Exception as e:
+            logger.warning(f"Could not review completed work: {e}")
+            return {"action": "ANSWER", "new_tasks": []}
 
     @measure
     def agent(self, state: SystemState):
@@ -122,33 +168,36 @@ class BackendStateMachine:
             return {"action": "ANSWER"}
 
         plan = state.get("plan", [])
-        completed_tasks = state.get("completed_tasks", [])
         unfinished = self.get_unfinished_tasks(state)
-
-        messages = [
-            {
-                "role": "system",
-                "content": agent_prompt(
-                    refined_query=state["refined_query"],
-                    plan=plan,
-                    completed_tasks=completed_tasks,
-                    unfinished_tasks=unfinished,
-                ),
+        if not plan:
+            new_plan = self.create_plan(refined_query=state["refined_query"])
+            return {
+                "plan": new_plan,
+                "action": "EXECUTE" if new_plan else "ANSWER",
+                "steps": state.get("steps", 0) + 1
             }
-        ]
 
-        try:
-            response = self.ollama_connector.chat(messages=messages)
-            response_json = parse_json_markdown(response)
-        except Exception:
-            response_json = self.handle_unstructured_response()
+        if unfinished:
+            return {
+                "action": "EXECUTE",
+                "steps": state.get("steps", 0) + 1
+            }
 
-        logger.debug(f"agent raw response: {response}")
+        review = self.review_completed_work(state)
+        action = review.get("action", "ANSWER")
+        new_tasks = review.get("new_tasks", [])
 
-        new_plan = response_json.get("plan", plan)
-        action = response_json.get("action", "ANSWER")
-        action = self.validate_execute_action(action, plan, new_plan, unfinished)
-        return {"plan": new_plan, "action": action, "steps": state.get("steps", 0) + 1}
+        if action == "EXECUTE" and new_tasks:
+            return {
+                "plan": plan + new_tasks,
+                "action": "EXECUTE",
+                "steps": state.get("steps", 0) + 1
+            }
+
+        return {
+            "action": "ANSWER",
+            "steps": state.get("steps", 0) + 1
+        }
 
     @measure
     def select_next_task(self, state: SystemState):
@@ -187,10 +236,10 @@ class BackendStateMachine:
         current_task = state.get("current_task")
         if current_task is None:
             return "agent"
-        action = current_task["action"]
-        if action == "RAG":
+        task_type = current_task["type"]
+        if task_type == "RAG":
             return "rag"
-        if action == "TOOL":
+        if task_type == "TOOL":
             return "tool"
         return "summarize"
 
@@ -247,7 +296,7 @@ class BackendStateMachine:
             {
                 "task_id": state["current_task"]["task_id"],
                 "task": state["current_task"]["task"],
-                "action": "RAG",
+                "type": "RAG",
                 "result": reranked_documents
             }
         )
@@ -271,7 +320,7 @@ class BackendStateMachine:
         completed_tasks.append({
             "task_id": current_task["task_id"],
             "task": current_task["task"],
-            "action": "TOOL",
+            "type": "TOOL",
             "tool": tool,
             "result": tool_result,
         })
@@ -292,21 +341,6 @@ class BackendStateMachine:
         return {"action": "ANSWER"}
 
     @measure
-    def reset_state(self):
-        """
-        We sometimes need to reset state, this responsible for it.
-        """
-        self.retrieved_documents = []
-        return {
-            "action": None,
-            "retrieved_documents": [],
-            "plan": [],
-            "completed_tasks": [],
-            "current_task": None,
-            "steps": 0,
-        }
-
-    @measure
     def get_unfinished_tasks(self, state: SystemState):
         """
         Simple function which returns the unfinished subtasks from the task list.
@@ -316,23 +350,6 @@ class BackendStateMachine:
         completed_ids = [task["task_id"] for task in completed_tasks if task.get("task_id") is not None]
         unfinished = [task for task in plan if task["task_id"] not in completed_ids]
         return unfinished
-
-    @measure
-    def validate_execute_action(self, action, old_plan, new_plan, unfinished_tasks):
-        """
-        I needed a validate helper function because sometimes the model returned execute, but there was no action.
-        """
-        if action != "EXECUTE":
-            return action
-        if unfinished_tasks:
-            return action
-        existing_ids = {task["task_id"] for task in old_plan}
-        new_ids = {task["task_id"] for task in new_plan}
-        new_tasks_added = bool(new_ids - existing_ids)
-        if not new_tasks_added:
-            logger.warning("Agent returned EXECUTE but there is nothing left to execute.")
-            return "ANSWER"
-        return action
 
 if __name__ == "__main__":
     state = {

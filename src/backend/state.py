@@ -4,7 +4,7 @@ from langgraph.graph.message import add_messages
 class CurrentTask(TypedDict):
     task_id: int
     task: str
-    action: str
+    type: str
     tool: str | None
     tool_args: dict | None
 

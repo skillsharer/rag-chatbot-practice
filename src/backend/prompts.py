@@ -47,114 +47,311 @@ def refinement_prompt(messages, user_query):
         }}
         """
 
-def agent_prompt(refined_query, plan, completed_tasks, unfinished_tasks):
-    if not plan:
-        return f"""
+def agent_prompt(refined_query):
+    return f"""
         You are a planner.
 
-        Create the smallest plan needed to answer the user.
+        Create the smallest reliable list of information-gathering tasks
+        needed to answer the user's request.
 
         User:
         {refined_query}
 
-        Task actions:
-        - RAG = qualitative company information
-        - TOOL = current stock price, revenue, net_income, or eps
+        Task types:
 
-        Tools:
+        RAG
+        Use for qualitative company information from the local knowledge base.
+
+        Examples of qualitative information:
+        - what a company does
+        - business model
+        - products and services
+        - customers
+        - market position
+        - technology
+        - company role
+        - company comparisons
+
+        TOOL
+        Use only for explicitly requested current financial information:
+        - current stock price
+        - revenue
+        - net_income
+        - eps
+
+        Available tools:
 
         stock_price
         Use only for current stock price.
 
-        Example:
+        Arguments:
         {{
-            "task_id": 1,
-            "task": "Get Microsoft's current stock price",
-            "action": "TOOL",
-            "tool": "stock_price",
-            "tool_args": {{
-                "ticker": "MSFT"
-            }}
+            "ticker": "<ticker>"
         }}
 
         financial_metric
         Use for revenue, net_income, or eps.
 
-        Example:
+        Arguments:
         {{
-            "task_id": 2,
-            "task": "Get Microsoft's latest EPS",
-            "action": "TOOL",
-            "tool": "financial_metric",
-            "tool_args": {{
-                "ticker": "MSFT",
-                "metric": "eps"
-            }}
+            "ticker": "<ticker>",
+            "metric": "revenue | net_income | eps"
         }}
 
-        RAG example:
-        {{
-            "task_id": 1,
-            "task": "Retrieve Microsoft's main products and business areas",
-            "action": "RAG",
-            "tool": null,
-            "tool_args": null
-        }}
+        Planning rules:
 
-        Important:
-        - tool may only be stock_price, financial_metric, or null.
-        - revenue, net_income, and eps are metrics, not tool names.
-        - Use financial_metric for all financial metrics.
-        - Create only tasks required by the user.
-        - Each task must have a unique task_id starting from 1.
-        - Return only valid JSON.
-        - Do not use markdown.
+        1. Create only tasks required by the user's request.
+
+        2. Every independently requested information need must be represented
+           by the plan.
+
+        3. General company questions are qualitative by default and require RAG.
+
+        4. General company comparisons are qualitative by default.
+
+        5. When qualitative information about multiple companies is required,
+           create one separate RAG task for each company.
+
+        6. For company comparisons, retrieve each company separately.
+           Do not create a separate task for performing the comparison.
+           The final answer will combine and compare the retrieved information.
+
+        7. Never add a stock price, revenue, net income, EPS, or another
+           financial metric unless the user explicitly requests it.
+
+        8. Words such as "company", "business", "tell me about", "compare",
+           or "comparison" do not imply financial information.
+
+        9. If qualitative company information and financial information are both
+           explicitly requested, create separate tasks for each required operation.
+
+        10. One task should represent one independent information-gathering operation.
+
+        11. Each task must have a unique task_id starting from 1.
+
+        12. type must be either RAG or TOOL.
+
+        13. For RAG tasks:
+            - tool must be null
+            - tool_args must be null
+
+        14. For TOOL tasks:
+            - tool must be stock_price or financial_metric
+            - tool_args must contain the required arguments
+
+        15. revenue, net_income, and eps are financial metrics,
+            not tool names. Use financial_metric for them.
+
+        16. Do not answer the user's question.
+
+        17. Return only a valid JSON list.
+
+        18. Do not use markdown.
+
+
+        Example 1 - qualitative company question:
+
+        User:
+        Tell me about NVIDIA.
 
         Return:
+        [
+            {{
+                "task_id": 1,
+                "task": "Retrieve qualitative company information about NVIDIA",
+                "type": "RAG",
+                "tool": null,
+                "tool_args": null
+            }}
+        ]
+
+
+        Example 2 - financial tool request:
+
+        User:
+        What is NVIDIA's current stock price?
+
+        Return:
+        [
+            {{
+                "task_id": 1,
+                "task": "Get NVIDIA's current stock price",
+                "type": "TOOL",
+                "tool": "stock_price",
+                "tool_args": {{
+                    "ticker": "NVDA"
+                }}
+            }}
+        ]
+
+
+        Example 3 - qualitative company comparison:
+
+        User:
+        Compare NVIDIA and Apple companies.
+
+        Return:
+        [
+            {{
+                "task_id": 1,
+                "task": "Retrieve qualitative company information about NVIDIA for comparison",
+                "type": "RAG",
+                "tool": null,
+                "tool_args": null
+            }},
+            {{
+                "task_id": 2,
+                "task": "Retrieve qualitative company information about Apple for comparison",
+                "type": "RAG",
+                "tool": null,
+                "tool_args": null
+            }}
+        ]
+
+
+        Example 4 - qualitative and financial request:
+
+        User:
+        Tell me about Microsoft's business and its current stock price.
+
+        Return:
+        [
+            {{
+                "task_id": 1,
+                "task": "Retrieve qualitative information about Microsoft's business",
+                "type": "RAG",
+                "tool": null,
+                "tool_args": null
+            }},
+            {{
+                "task_id": 2,
+                "task": "Get Microsoft's current stock price",
+                "type": "TOOL",
+                "tool": "stock_price",
+                "tool_args": {{
+                    "ticker": "MSFT"
+                }}
+            }}
+        ]
+
+
+        Example 5 - company comparison with explicitly requested stock prices:
+
+        User:
+        Compare Apple and NVIDIA and give me their current stock prices.
+
+        Return:
+        [
+            {{
+                "task_id": 1,
+                "task": "Retrieve qualitative company information about Apple for comparison",
+                "type": "RAG",
+                "tool": null,
+                "tool_args": null
+            }},
+            {{
+                "task_id": 2,
+                "task": "Retrieve qualitative company information about NVIDIA for comparison",
+                "type": "RAG",
+                "tool": null,
+                "tool_args": null
+            }},
+            {{
+                "task_id": 3,
+                "task": "Get Apple's current stock price",
+                "type": "TOOL",
+                "tool": "stock_price",
+                "tool_args": {{
+                    "ticker": "AAPL"
+                }}
+            }},
+            {{
+                "task_id": 4,
+                "task": "Get NVIDIA's current stock price",
+                "type": "TOOL",
+                "tool": "stock_price",
+                "tool_args": {{
+                    "ticker": "NVDA"
+                }}
+            }}
+        ]
+
+
+        Example 6 - qualitative information and financial metric:
+
+        User:
+        What are Amazon's main business areas and latest EPS?
+
+        Return:
+        [
+            {{
+                "task_id": 1,
+                "task": "Retrieve Amazon's main business areas",
+                "type": "RAG",
+                "tool": null,
+                "tool_args": null
+            }},
+            {{
+                "task_id": 2,
+                "task": "Get Amazon's latest EPS",
+                "type": "TOOL",
+                "tool": "financial_metric",
+                "tool_args": {{
+                    "ticker": "AMZN",
+                    "metric": "eps"
+                }}
+            }}
+        ]
+    """
+
+def review_prompt(refined_query, completed_tasks):
+    return f"""
+        You are reviewing whether the completed work is sufficient
+        to answer the user's request.
+
+        User request:
+        {refined_query}
+
+        Completed work:
+        {completed_tasks}
+
+        Decide whether all information explicitly required by the user
+        has been gathered.
+
+        Rules:
+        1. Do not answer the user's question.
+        2. Do not repeat work that has already been completed.
+        3. Return ANSWER if the completed work is sufficient.
+        4. Return EXECUTE only if important requested information is missing.
+        5. If work is missing, create only the missing tasks.
+        6. New task IDs must continue after the existing task IDs.
+        7. type must be RAG or TOOL.
+        8. tool may only be stock_price, financial_metric, or null.
+        9. Return only valid JSON.
+        10. Do not use markdown.
+
+        If everything is sufficient:
+
+        {{
+            "action": "ANSWER",
+            "new_tasks": []
+        }}
+
+        If work is missing:
+
         {{
             "action": "EXECUTE",
-            "plan": [
+            "new_tasks": [
                 {{
-                    "task_id": 1,
+                    "task_id": 3,
                     "task": "...",
-                    "action": "RAG",
+                    "type": "RAG",
                     "tool": null,
                     "tool_args": null
                 }}
             ]
         }}
-        """
-    else:
-        return f"""
-        You are checking whether the work is finished.
-
-        User:
-        {refined_query}
-
-        Completed:
-        {completed_tasks}
-
-        Unfinished:
-        {unfinished_tasks}
-
-        Rules:
-        - If Unfinished is not empty, return EXECUTE.
-        - If Unfinished is empty and Completed is enough to answer the user, return ANSWER.
-        - If Unfinished is empty but important information is missing, return EXECUTE only if new work must be added.
-        - Do not recreate or change the existing plan.
-        - Return only valid JSON.
-        - Do not use markdown.
-
-        If more work remains:
-        {{
-            "action": "EXECUTE"
-        }}
-
-        If the answer can be produced:
-        {{
-            "action": "ANSWER"
-        }}
-        """
+    """
 
 def summary_prompt(refined_query, completed_tasks):
     return f"""
