@@ -21,8 +21,7 @@ class UserInterface:
         chat_column, graph_column = st.columns([2, 1])
 
         with chat_column:
-            st.subheader("Medication assistant")
-            st.caption("Answers are grounded in medication information leaflets.")
+            st.subheader("Stock price assistant")
 
             for message in st.session_state.messages:
                 with st.chat_message(message["role"]):
@@ -37,7 +36,7 @@ class UserInterface:
             )
 
         with st.bottom:
-            user_message = st.chat_input("Ask about a medication...")
+            user_message = st.chat_input("Ask about a stock...")
 
             if st.button("Clear chat"):
                 self.connector.delete_chat(st.session_state.thread_id)

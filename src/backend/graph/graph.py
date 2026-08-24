@@ -1,15 +1,20 @@
-import os
+import logging
 from langgraph.graph import START, END, StateGraph
 from langgraph.checkpoint.memory import InMemorySaver
 from langchain_core.utils.json import parse_json_markdown
 from langchain_core.messages import convert_to_openai_messages
-from src.config import SNAPSHOT_PATH, DATABASE_PATH
+from src.config import SNAPSHOT_PATH, MAX_NUM_OF_AGENT_STEPS
 from src.backend.state import SystemState
-from src.backend.prompts import REFINEMENT_PROMPT, PLAN_PROMPT, SUMMARY_PROMPT, TOOL_PROMPT
+from src.backend.prompts import refinement_prompt, agent_prompt, summary_prompt
 from src.backend.ollama import OllamaConnector
 from src.backend.data.db import VectorDatabase
 from src.backend.data.embed import Embedder
-from src.backend.tools.wiki_search import WikipediaSearch
+from src.backend.tools.stock_price import get_stock_price
+from src.backend.tools.financial_metric import get_latest_financial_metric
+from src.backend.utils.latency import measure
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 class BackendStateMachine:
     def __init__(self):
@@ -18,11 +23,11 @@ class BackendStateMachine:
         self.vector_db.load_snapshot(SNAPSHOT_PATH)
         self.sentence_embedder = Embedder()
         self.checkpointer = InMemorySaver()
-        self.wiki_search = WikipediaSearch()
         self.visited_nodes = []
-        self.last_retrieved_documents = []
+        self.retrieved_documents = []
         self.build_graph()
 
+    @measure
     def build_graph(self):
         # RAG GRAPH:
         rag_builder = StateGraph(SystemState)
@@ -39,110 +44,174 @@ class BackendStateMachine:
         # TOOL GRAPH:
         tool_builder = StateGraph(SystemState)
 
-        tool_builder.add_node("select_tool", self.select_tool)
-        tool_builder.add_node("execute_tool", self.execute_tool)
+        tool_builder.add_node("tool", self.tool)
 
-        tool_builder.add_edge(START, "select_tool")
-        tool_builder.add_edge("select_tool", "execute_tool")
-        tool_builder.add_edge("execute_tool", END)
+        tool_builder.add_edge(START, "tool")
+        tool_builder.add_edge("tool", END)
 
         self.tool_graph = tool_builder.compile()
 
         # FINAL GRAPH:
-
         builder = StateGraph(SystemState)
 
         builder.add_node("user_query_refinement", self.user_query_refinement)
-        builder.add_node("plan_task", self.plan_task)
+        builder.add_node("agent", self.agent)
+        builder.add_node("select_next_task", self.select_next_task)
         builder.add_node("rag", self.rag_graph)
-        builder.add_node("tool",self.tool_graph)
+        builder.add_node("tool", self.tool_graph)
         builder.add_node("summarize", self.summarize)
 
         builder.add_edge(START, "user_query_refinement")
-        builder.add_edge("user_query_refinement", "plan_task")
-        builder.add_conditional_edges("plan_task", self.route_task)
-        builder.add_edge("rag", "summarize")
-        builder.add_edge("tool", "summarize")
-        builder.add_edge("summarize", END)
+        builder.add_conditional_edges("user_query_refinement", self.route_query)
+        builder.add_conditional_edges("agent", self.route_agent)
+        builder.add_conditional_edges("select_next_task", self.route_task)
+        builder.add_edge("rag", "select_next_task")
+        builder.add_edge("tool", "select_next_task")
 
+        builder.add_edge("summarize", END)
         self.graph = builder.compile(checkpointer=self.checkpointer)
 
-
+    @measure
     def user_query_refinement(self, state: SystemState):
+        """
+        Refining user query and delivers to SUMMARY or AGENT.
+        """
         self.visited_nodes.append("user_query_refinement")
-        self.last_retrieved_documents = []
+        logger.debug(f"user_query_refinement: {state}")
+
+        reset_values = self.reset_state()
+
+        history = convert_to_openai_messages(state.get("messages", []))
+        latest_message = history[-1]["content"]
+        previous_history = history[:-1]
 
         messages = [
             {
                 "role": "system",
-                "content": REFINEMENT_PROMPT,
+                "content": refinement_prompt(
+                    messages=previous_history,
+                    user_query=latest_message,
+                ),
             }
         ]
 
-        history = convert_to_openai_messages(
-            state.get("messages", [])
-        )
-        messages.extend(history)
-
-        response = self.ollama_connector.chat(messages=messages)
-        response_json = parse_json_markdown(response)
+        try:
+            response = self.ollama_connector.chat(messages=messages)
+            response_json = parse_json_markdown(response)
+        except Exception:
+            response_json = self.handle_unstructured_response()
+        logger.debug(f"user_query_refinement: {response_json}")
 
         return {
-            "refined_query": response_json.get("refined_query", "")
+            **reset_values,
+            "refined_query": response_json.get("refined_query", ""),
+            "action": response_json.get("action", "AGENT"),
+            "completed_tasks": [],
+            "steps": 0,
         }
 
-    def plan_task(self, state: SystemState):
-        self.visited_nodes.append("plan_task")
-        messages = [
-                {
-                    "role": "system",
-                    "content": PLAN_PROMPT
-                },
-                {
-                    "role": "user",
-                    "content": state['refined_query']
-                }
-            ]
-        response = self.ollama_connector.chat(messages=messages)
-        response_json = parse_json_markdown(response)
-        return {"plan": response_json.get("plan", "SIMPLE")}
+    @measure
+    def agent(self, state: SystemState):
+        """
+        The brain of the system. It understands and decomposes the task into subtasks.
+        """
+        self.visited_nodes.append("agent")
+        logger.debug(f"agent state: {state}")
 
+        if state.get("steps", 0) >= MAX_NUM_OF_AGENT_STEPS:
+            return {"action": "ANSWER"}
 
-    def route_task(self, state: SystemState):
-        if state["plan"] == "RAG":
-            return "rag"
-        elif state["plan"] == "TOOL":
-            return "tool"
-        return "summarize"
-
-
-    def summarize(self, state: SystemState):
-        self.visited_nodes.append("summarize")
-        context = state.get("retrieved_documents", [])
-        tool_result = state.get("tool_result", "")
+        plan = state.get("plan", [])
+        completed_tasks = state.get("completed_tasks", [])
+        unfinished = self.get_unfinished_tasks(state)
 
         messages = [
             {
                 "role": "system",
-                "content": SUMMARY_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": f"""
-                Query:
-                {state["refined_query"]}
-
-                Retrieved context:
-                {context}
-
-                Tool result:
-                {tool_result}
-                """,
-            },
+                "content": agent_prompt(
+                    refined_query=state["refined_query"],
+                    plan=plan,
+                    completed_tasks=completed_tasks,
+                    unfinished_tasks=unfinished,
+                ),
+            }
         ]
 
-        response = self.ollama_connector.chat(messages=messages)
+        try:
+            response = self.ollama_connector.chat(messages=messages)
+            response_json = parse_json_markdown(response)
+        except Exception:
+            response_json = self.handle_unstructured_response()
 
+        logger.debug(f"agent raw response: {response}")
+
+        new_plan = response_json.get("plan", plan)
+        action = response_json.get("action", "ANSWER")
+        action = self.validate_execute_action(action, plan, new_plan, unfinished)
+        return {"plan": new_plan, "action": action, "steps": state.get("steps", 0) + 1}
+
+    @measure
+    def select_next_task(self, state: SystemState):
+        """
+        Based on the subtask list it selects the next sub task.
+        """
+        self.visited_nodes.append("select_next_task")
+        unfinished = self.get_unfinished_tasks(state)
+        if not unfinished:
+            return {"current_task": None}
+        return {"current_task": unfinished[0]}
+    
+    @measure
+    def route_agent(self, state: SystemState):
+        """
+        Simple routing function based on the state after agent.
+        """
+        if state.get("action") == "ANSWER":
+            return "summarize"
+        return "select_next_task"
+
+    @measure
+    def route_query(self, state: SystemState):
+        """
+        Simple routing function based on the state after user query refinement.
+        """
+        if state.get("action") == "SIMPLE":
+            return "summarize"
+        return "agent"
+    
+    @measure
+    def route_task(self, state: SystemState):
+        """
+        Simple routing function based on the state after task.
+        """
+        current_task = state.get("current_task")
+        if current_task is None:
+            return "agent"
+        action = current_task["action"]
+        if action == "RAG":
+            return "rag"
+        if action == "TOOL":
+            return "tool"
+        return "summarize"
+
+    @measure
+    def summarize(self, state: SystemState):
+        """
+        The summarization module of the system which delivers the final answer to the user.
+        """
+        self.visited_nodes.append("summarize")
+        logger.debug(f"summarize: {state}")
+        messages = [
+            {
+                "role": "system",
+                "content": summary_prompt(
+                    refined_query=state["refined_query"],
+                    completed_tasks=state.get("completed_tasks", []),
+                ),
+            }
+        ]
+        response = self.ollama_connector.chat(messages=messages)
+        logger.debug(f"summarize: {response}")
         return {
             "answer": response,
             "messages": [
@@ -154,57 +223,132 @@ class BackendStateMachine:
             "retrieved_documents": []
         }
 
-
+    @measure
     def retrieve(self, state: SystemState):
+        """
+        Retrieval function based on the user/refined query or task.
+        """
         self.visited_nodes.append("retrieve")
-        query_vector = self.sentence_embedder.embed(state["refined_query"])
+        current_task = (state["current_task"]["task"] or state["refined_query"])
+        query_vector = self.sentence_embedder.embed(current_task)
         top_k_answers = self.vector_db.retrieve_top_k(query_vector=query_vector)
         return {"retrieved_documents": top_k_answers}
-
+    
+    @measure
     def rerank(self, state: SystemState):
+        """
+        Reranking function. It just copies the documents currently.
+        """
         self.visited_nodes.append("rerank")
-
-        reranked_documents = state["retrieved_documents"]
-        self.last_retrieved_documents = reranked_documents
-
-        return {"retrieved_documents": reranked_documents}
-
-    def select_tool(self, state: SystemState):
-        self.visited_nodes.append("select_tool")
-
-        messages = [
+        reranked_documents = state.get("retrieved_documents", [])
+        self.retrieved_documents += (reranked_documents)
+        completed_tasks = state.get("completed_tasks", []).copy()
+        completed_tasks.append(
             {
-                "role": "system",
-                "content": TOOL_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": f"""
-                User query:
-                    {state["refined_query"]}
-                """,
-            },
-        ]
-        response = self.ollama_connector.chat(messages=messages)
-        response = parse_json_markdown(response)
-        return {"tool": response.get("tool", ""), "tool_args": response.get("tool_args", "")}
+                "task_id": state["current_task"]["task_id"],
+                "task": state["current_task"]["task"],
+                "action": "RAG",
+                "result": reranked_documents
+            }
+        )
+        return {"completed_tasks": completed_tasks}
 
-    def execute_tool(self, state: SystemState):
-        self.visited_nodes.append("execute_tool")
-        if state.get("tool", "") == "wikipedia":
-            tool_result = self.wiki_search.search(state["tool_args"])
+    @measure
+    def tool(self, state: SystemState):
+        """
+        Tool usage module. Based on the state it calls the requested tools.
+        """
+        self.visited_nodes.append("tool")
+        current_task = state["current_task"]
+        tool, tool_args = current_task.get("tool", ""), current_task.get("tool_args", "")
+        if tool == "stock_price":
+            tool_result = get_stock_price(ticker=tool_args.get("ticker",""))
+        elif tool == "financial_metric":
+            tool_result = get_latest_financial_metric(ticker=tool_args.get("ticker",""), metric=tool_args.get("metric",""))
         else:
-            tool_result = [f for f in os.listdir(DATABASE_PATH) if f.endswith(".pdf")]
-        return {"tool_result": tool_result}
+            raise ValueError(f"Unknown tool: {tool}")
+        completed_tasks = state.get("completed_tasks", []).copy()
+        completed_tasks.append({
+            "task_id": current_task["task_id"],
+            "task": current_task["task"],
+            "action": "TOOL",
+            "tool": tool,
+            "result": tool_result,
+        })
+        return {"completed_tasks": completed_tasks}
 
+    @measure
     def delete_chat(self, thread_id: str):
-        self.backend.checkpointer.delete_thread(thread_id)
+        """
+        Backend part of the delete chat button.
+        """
+        self.checkpointer.delete_thread(thread_id)
 
+    @measure
+    def handle_unstructured_response(self):
+        """
+        Very basic route if we have a malformed answer.
+        """
+        return {"action": "ANSWER"}
+
+    @measure
+    def reset_state(self):
+        """
+        We sometimes need to reset state, this responsible for it.
+        """
+        self.retrieved_documents = []
+        return {
+            "action": None,
+            "retrieved_documents": [],
+            "plan": [],
+            "completed_tasks": [],
+            "current_task": None,
+            "steps": 0,
+        }
+
+    @measure
+    def get_unfinished_tasks(self, state: SystemState):
+        """
+        Simple function which returns the unfinished subtasks from the task list.
+        """
+        plan = state.get("plan", [])
+        completed_tasks = state.get("completed_tasks", [])
+        completed_ids = [task["task_id"] for task in completed_tasks if task.get("task_id") is not None]
+        unfinished = [task for task in plan if task["task_id"] not in completed_ids]
+        return unfinished
+
+    @measure
+    def validate_execute_action(self, action, old_plan, new_plan, unfinished_tasks):
+        """
+        I needed a validate helper function because sometimes the model returned execute, but there was no action.
+        """
+        if action != "EXECUTE":
+            return action
+        if unfinished_tasks:
+            return action
+        existing_ids = {task["task_id"] for task in old_plan}
+        new_ids = {task["task_id"] for task in new_plan}
+        new_tasks_added = bool(new_ids - existing_ids)
+        if not new_tasks_added:
+            logger.warning("Agent returned EXECUTE but there is nothing left to execute.")
+            return "ANSWER"
+        return action
 
 if __name__ == "__main__":
+    state = {
+        "messages": [
+                        {
+                            "role": "user",
+                            "content": "What medicine could i use for my leg if it hurts, can you check it on wikipedia?",
+                        }
+                    ]
+    }
+    config = {
+        "configurable": {
+            "thread_id": "test"
+        }
+    }
     backend_state_machine = BackendStateMachine()
-    result = backend_state_machine.graph.invoke({
-        "user_query": "Hi, is there any medicine which helps for my headache?"
-    })
+    result = backend_state_machine.graph.invoke(state, config=config)
 
     print(result)

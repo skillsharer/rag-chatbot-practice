@@ -1,105 +1,191 @@
-REFINEMENT_PROMPT = """
-Rewrite the user's latest message into a clear, self-contained query when needed.
+def refinement_prompt(messages, user_query):
+    return f"""
+        You are a query refinement and routing module.
 
-Use the conversation history to understand references to previous messages.
+        Rewrite the user's current message into a clear, self-contained query when needed.
 
-Rules:
-1. Preserve the user's meaning.
-2. Resolve references using the conversation history when necessary.
-3. If the latest message is already clear, return it unchanged.
-4. Do not answer the query.
-5. Do not add new information.
+        Also determine whether the request requires the agentic workflow.
 
-Return only valid JSON:
-{
-  "refined_query": "<self-contained query>"
-}
-"""
+        Available actions:
 
-PLAN_PROMPT = """
-Choose exactly one strategy for the user's query.
+        SIMPLE
+        Use for greetings, thanks, goodbye, acknowledgements, yes/no responses,
+        small talk, or conversational requests that do not require company information,
+        current stock prices, or financial metrics.
 
-Strategies:
+        AGENT
+        Use when the request requires:
+        - qualitative company information from the local knowledge base
+        - a current stock price
+        - a financial metric
+        - multiple information-gathering steps
 
-- `SIMPLE`
-  Use when the query can be answered directly without looking anything up.
+        Rules:
+        1. Preserve the user's meaning.
+        2. Determine the intent of the current user message before considering history.
+        3. Use conversation history only when necessary to resolve references.
+        4. If the current message is already clear, return it unchanged.
+        5. Greetings, acknowledgements, thanks, goodbye, yes/no responses, and small talk
+        must not be rewritten into the previous conversation topic.
+        6. Resolve references such as "it", "that company", "its revenue",
+        or "what about the price?" using conversation history when necessary.
+        7. Do not answer the query.
+        8. Do not add new information.
+        9. If the user message is missing, return an empty refined_query and SIMPLE.
+        10. Return only valid JSON.
 
-- `RAG`
-  Use only when the user wants information from the uploaded medication documents.
+        Conversation history:
+        {messages}
 
-- `TOOL`
-  Use when the user wants information from Wikipedia or wants to inspect which medication files exist in the local database.
+        Current user message:
+        {user_query}
 
-Rules:
-1. First ask: does the user explicitly or implicitly need the uploaded medication documents?
-   - If yes -> RAG.
-2. Otherwise ask: does the user need Wikipedia or the list of available local files?
-   - If yes -> TOOL.
-3. Otherwise -> SIMPLE.
-4. A medical topic alone does NOT mean RAG.
-5. A medicine name alone does NOT mean RAG.
-6. If the user asks for broader, external, encyclopedic, or Wikipedia information -> TOOL.
-7. If the user asks what medications or PDF files are available -> TOOL.
-8. Greetings, thanks, casual conversation, explanations, and follow-up discussion that do not require another lookup -> SIMPLE.
-9. Do not answer the query.
+        Return exactly:
+        {{
+            "refined_query": "<clear self-contained query>",
+            "action": "SIMPLE | AGENT"
+        }}
+        """
 
-Examples:
+def agent_prompt(refined_query, plan, completed_tasks, unfinished_tasks):
+    if not plan:
+        return f"""
+        You are a planner.
 
-"Hi" -> SIMPLE
-"Thanks" -> SIMPLE
-"Why is that dangerous?" -> SIMPLE
+        Create the smallest plan needed to answer the user.
 
-"What are the side effects listed for Tecentriq?" -> RAG
-"What does the leaflet say about Cimzia pregnancy warnings?" -> RAG
-"According to the uploaded documents, what is Eliquis used for?" -> RAG
+        User:
+        {refined_query}
 
-"Search Wikipedia for Tecentriq." -> TOOL
-"Tell me more general information about Tecentriq from Wikipedia." -> TOOL
-"What medications are available in the database?" -> TOOL
-"List the PDF files." -> TOOL
+        Task actions:
+        - RAG = qualitative company information
+        - TOOL = current stock price, revenue, net_income, or eps
 
-Return only valid JSON:
-{
-  "plan": "SIMPLE | RAG | TOOL"
-}
-"""
+        Tools:
 
-SUMMARY_PROMPT = """
-You are a medical RAG system assistant module.
+        stock_price
+        Use only for current stock price.
 
-Answer the user's refined query.
+        Example:
+        {{
+            "task_id": 1,
+            "task": "Get Microsoft's current stock price",
+            "action": "TOOL",
+            "tool": "stock_price",
+            "tool_args": {{
+                "ticker": "MSFT"
+            }}
+        }}
 
-You may receive retrieved document context or a tool result.
+        financial_metric
+        Use for revenue, net_income, or eps.
 
-Rules:
-1. If document context is provided, base the answer on it.
-2. If a tool result is provided, use it.
-3. If neither is provided, answer normally.
-4. Do not invent unsupported information when the answer depends on documents or tools.
-5. If the provided context is insufficient, say so.
-6. Keep the answer clear and concise.
-7. Do not mention internal system implementation.
-8. Return only the final answer.
-"""
+        Example:
+        {{
+            "task_id": 2,
+            "task": "Get Microsoft's latest EPS",
+            "action": "TOOL",
+            "tool": "financial_metric",
+            "tool_args": {{
+                "ticker": "MSFT",
+                "metric": "eps"
+            }}
+        }}
 
-TOOL_PROMPT = """
-Select the correct tool for the user's query.
+        RAG example:
+        {{
+            "task_id": 1,
+            "task": "Retrieve Microsoft's main products and business areas",
+            "action": "RAG",
+            "tool": null,
+            "tool_args": null
+        }}
 
-Available tools:
+        Important:
+        - tool may only be stock_price, financial_metric, or null.
+        - revenue, net_income, and eps are metrics, not tool names.
+        - Use financial_metric for all financial metrics.
+        - Create only tasks required by the user.
+        - Each task must have a unique task_id starting from 1.
+        - Return only valid JSON.
+        - Do not use markdown.
 
-- `wikipedia` — Search Wikipedia for general knowledge.
-- `list_database` — List the medication PDF files available in the local database.
+        Return:
+        {{
+            "action": "EXECUTE",
+            "plan": [
+                {{
+                    "task_id": 1,
+                    "task": "...",
+                    "action": "RAG",
+                    "tool": null,
+                    "tool_args": null
+                }}
+            ]
+        }}
+        """
+    else:
+        return f"""
+        You are checking whether the work is finished.
 
-Rules:
-1. Use `list_database` when the user asks what medications, documents, PDFs, or files are available.
-2. Use `wikipedia` when the user asks for general knowledge that should be looked up externally.
-3. For `wikipedia`, use the user's query as tool_args.
-4. For `list_database`, tool_args must be null.
-5. Do not answer the query.
+        User:
+        {refined_query}
 
-Return only valid JSON:
-{
-  "tool": "wikipedia | list_database",
-  "tool_args": "<query or null>"
-}
-"""
+        Completed:
+        {completed_tasks}
+
+        Unfinished:
+        {unfinished_tasks}
+
+        Rules:
+        - If Unfinished is not empty, return EXECUTE.
+        - If Unfinished is empty and Completed is enough to answer the user, return ANSWER.
+        - If Unfinished is empty but important information is missing, return EXECUTE only if new work must be added.
+        - Do not recreate or change the existing plan.
+        - Return only valid JSON.
+        - Do not use markdown.
+
+        If more work remains:
+        {{
+            "action": "EXECUTE"
+        }}
+
+        If the answer can be produced:
+        {{
+            "action": "ANSWER"
+        }}
+        """
+
+def summary_prompt(refined_query, completed_tasks):
+    return f"""
+        You are a helpful company and financial information assistant.
+        Answer the user's request using the completed work as the factual evidence.
+        User request:
+        {refined_query}
+
+        Completed tasks and results:
+        {completed_tasks}
+
+        Rules:
+        1. Answer the user's request directly.
+        2. Use completed task results as the factual basis of the answer.
+        3. Address every requested part when supporting information is available.
+        4. Combine results from multiple tasks into one coherent answer.
+        5. For qualitative company information, use only retrieved company knowledge.
+        6. For current stock prices, use only the corresponding stock price result.
+        7. For revenue, net income, or EPS, use only the corresponding financial
+            metric result.
+        8. Do not invent, estimate, or supplement unsupported company or financial facts.
+        9. Ignore unrelated information contained in retrieved results.
+        10. If a result is empty or insufficient, do not pretend the information was found.
+        11. If part of the request cannot be answered from the available evidence,
+            clearly say that the available information was insufficient.
+        12. Do not expose raw retrieval chunks. Summarize relevant information naturally.
+        13. If there are no completed tasks, answer simple conversational requests naturally.
+        14. Do not reuse information from previous requests unless it appears in the
+            completed work for the current request.
+        15. Do not mention tasks, task IDs, planning, routing, tools, RAG, prompts,
+            retrieved documents, or implementation details.
+        16. Keep the answer clear, concise, and focused.
+        17. Return only the final user-facing answer.
+        """
