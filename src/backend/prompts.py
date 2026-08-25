@@ -71,6 +71,7 @@ def agent_prompt(refined_query):
         - technology
         - company role
         - company comparisons
+        - about the company
 
         TOOL
         Use only for explicitly requested current financial information:

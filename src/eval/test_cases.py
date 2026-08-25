@@ -31,4 +31,12 @@ TEST_CASES = [
         "query": "What are Amazon's main business areas and latest EPS?",
         "expected_types": ["RAG", "TOOL"],
     },
+    {
+        "query": "Tell me about Meta and its latest EPS",
+        "expected_types": ["RAG", "TOOL"],
+    },
+    {
+        "query": "Compare Microsoft and Google and give me their stock prices",
+        "expected_types": ["RAG", "RAG", "TOOL", "TOOL"],
+    },
 ]

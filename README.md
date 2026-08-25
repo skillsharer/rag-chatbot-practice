@@ -146,6 +146,8 @@ components can be evaluated and replaced independently as the system evolves.
 First, you need to create and use a virtual environment:
 1. `uv .venv venv`
 2. `source .venv/bin/activate`
+3. Obtain the dataset and put the contents into a directory which you define also in your `.env` file. Dataset can be found [here](https://github.com/skillsharer/rag-chatbot-practice/releases/tag/database-v1). 
+
 
 Then,
 ### Database creation:
@@ -169,6 +171,7 @@ I used a generative AI-based tool to complete the homework.
 
 1. I used AI for brainstorming agentic steps.
 2. I used AI to generate helper tools and functions for my main RAG system.
+3. I used AI also for the initial database generation.
 
 ## Thank you
 Thank you for reading this readme and taking the time to review this project. Any feedback is really appreciated!
