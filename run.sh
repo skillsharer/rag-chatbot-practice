@@ -115,37 +115,45 @@ if [[ "$MODE" == "local" ]]; then
   fi
 else
   echo "[6/8] Building Docker image rag-chatbot..."
-    docker build --no-cache -t rag-chatbot .
+  docker build --no-cache -t rag-chatbot .
+
+  mkdir -p tmp
 
   echo "[7/8] Running data upload inside Docker..."
-    docker run --rm \
-        --env-file .env \
-        -v "$(pwd)/${DATABASE_PATH}:/app/${DATABASE_PATH}:ro" \
-        -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
-        rag-chatbot \
-        uv run python -m src.upload
+  docker run --rm \
+      --env-file .env \
+      -v "$(pwd)/${DATABASE_PATH}:/app/${DATABASE_PATH}:ro" \
+      -v "$(pwd)/tmp:/app/tmp" \
+      -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
+      rag-chatbot \
+      uv run python -m src.upload
 
   if [[ "$TASK" == "eval" ]]; then
     echo "[8/8] Running Docker evaluation (src/eval/eval.py)..."
     docker run --rm \
         --env-file .env \
         -v "$(pwd)/${DATABASE_PATH}:/app/${DATABASE_PATH}:ro" \
+        -v "$(pwd)/tmp:/app/tmp" \
         -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
         rag-chatbot \
         uv run python -m src.eval.eval
+
   elif [[ "$TASK" == "performance" ]]; then
     echo "[8/8] Running Docker performance test (src/eval/performance_test.py)..."
     docker run --rm \
         --env-file .env \
         -v "$(pwd)/${DATABASE_PATH}:/app/${DATABASE_PATH}:ro" \
+        -v "$(pwd)/tmp:/app/tmp" \
         -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
         rag-chatbot \
         uv run python -m src.eval.performance_test
+
   else
     echo "[8/8] Starting Docker container (Streamlit)..."
     docker run --rm -ti \
         --env-file .env \
         -v "$(pwd)/${DATABASE_PATH}:/app/${DATABASE_PATH}:ro" \
+        -v "$(pwd)/tmp:/app/tmp" \
         -v "$HOME/.cache/huggingface:/root/.cache/huggingface" \
         -p 8501:8501 \
         rag-chatbot \
