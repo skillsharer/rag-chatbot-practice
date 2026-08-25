@@ -1,10 +1,10 @@
 # Evaluation results
 
-I ran two experiments. Both experiments using the same test cases which are defined in the `test_cases.py` file.
+I ran two experiments. Both experiments used the same test cases which are defined in the `test_cases.py` file.
 
 ## Results:
-1. The first experiment was about to measure the system modules latency. 
-Measurements held on a `Mac Pro M2 Max`.  
+1. The first experiment measured the latency of the system modules. 
+Measurements were performed on a `MacBook Pro M2 Max`.  
 
 Raw results:
 
@@ -123,17 +123,17 @@ route_task
 
 ```
 
-`./run.sh --docker --performance-test`
+The main bottleneck is where we call the SLM modules. The system could be improved in several ways:
+- Prompt optimization: Smaller prompts reduce the SLM inference time.
+- Cache frequent answers for frequent queries. 
+- Introduce prompt-caching: Reuse static parts of the prompt when supported by the inference framework, reducing repeated computation.
+- Investigate other smaller models.
+- Use more powerful hardware or GPU acceleration.
 
-```
 
+2. The second test evaluated the `agent` node, whether its decided `plan` equals our pre-defined plans in the test cases file. Raw results:
 
-```
-
-
-2. The second test was to evaluate the `agent` node, wether its decided `plan` equals our pre-defined plans in the test cases file. Raw results:
-
-`./run.sh --local --latency`
+`./run.sh --local --eval`
 
 ```
 build_graph took 0.0045 seconds
@@ -224,4 +224,4 @@ Correct:  8/8
 Accuracy: 100.0%
 ```
 
-The system shows 100% accuracy. However we shall not forget that the number of test cases are low and relatively simple problems. I've also heavily optimized the prompt to cover these cases. Therefore we can assume freely that the system would fail relatively easily in more complex/sophisticated problems.
+The planner-action module achieved 100% accuracy on the 8 test cases. However we shall not forget that the number of test cases is low and I created relatively simple problems. I've also heavily optimized the prompt to cover these cases. Therefore, this result should not be interpreted as general planner accuracy, and the system may fail on more complex or previously unseen problems.
