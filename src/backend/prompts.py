@@ -51,7 +51,7 @@ def agent_prompt(refined_query):
     return f"""
         You are a planner.
 
-        Create the smallest reliable list of information-gathering tasks
+        Create a reliable list of information-gathering tasks
         needed to answer the user's request.
 
         User:
